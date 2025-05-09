@@ -28,12 +28,26 @@ func health_check(server backendserver) bool {
 		return false
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == 200 {
-		fmt.Println("Server", server, "is up")
-		return true
-	}
-	return false
+	fmt.Println("Server", server.url, "is up")
+	return true
+
 }
+func find_next_live_server() backendserver {
+	current = get_server_index()
+	len_of_server_list := len(server_list)
+	for i := uint64(0); i < uint64(len_of_server_list); i++ {
+		idx := (current + i) % uint64(len_of_server_list)
+		if health_check(server_list[idx]) {
+			server_list[idx].islive = true
+			return server_list[idx]
+		} else {
+			server_list[idx].islive = false
+		}
+		current = get_server_index()
+	}
+	return server_list[current]
+}
+
 func get_server_index() uint64 {
 	return uint64(int(atomic.AddUint64(&current, uint64(1)) % uint64(len(server_list))))
 }
@@ -48,9 +62,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf("  %s = %s\n", key, value)
 		}
 	}
-	server_index := get_server_index()
-	fmt.Println("Current server:", server_index)
-	backendURL, _ := url.Parse(server_list[server_index].url)
+	server_obj := find_next_live_server()
+	fmt.Println("Current server:", server_obj)
+	backendURL, _ := url.Parse(server_obj.url)
 	proxy := httputil.NewSingleHostReverseProxy(backendURL)
 	proxy.ServeHTTP(w, r)
 }
