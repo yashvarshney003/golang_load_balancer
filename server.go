@@ -6,20 +6,29 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"sync/atomic"
+	"time"
+	"sync"
 )
 
 type backendserver struct {
 	url    string
 	islive bool
+	mux sync.RWMutex
 }
 
-// type ServerPool struct {
-// 	backends []*Backend
-// 	current  uint64
-//   }
+func (b *backendserver) setlive(isLive bool) {
+	b.mux.Lock()
+	defer b.mux.Unlock()
+	b.islive = isLive
+}
 
-var server_list []backendserver = []backendserver{{"http://127.0.0.1:8000/", true}, {"http://127.0.0.1:8001/", true}, {"http://127.0.0.1:8002/", true}}
+var server_list []backendserver = []backendserver{
+	{url: "http://127.0.0.1:8000/", islive :true },
+    {url: "http://127.0.0.1:8001/", islive: true},
+	{url: "http://127.0.0.1:8002/", islive:true}}
+
 var current uint64
+
 
 func health_check(server backendserver) bool {
 	resp, err := http.Get(server.url)
@@ -32,18 +41,41 @@ func health_check(server backendserver) bool {
 	return true
 
 }
+func regular_health_check(server_list []backendserver) {
+	fmt.Println("Starting health check...")
+	t := time.NewTicker(time.Second * 10)
+	for {
+		select {
+		case <-t.C:
+			fmt.Println("Starting health check...")
+			for _, server := range server_list {
+				if server.islive{
+					if !health_check(server) {
+						fmt.Println("Server", server.url, "is down")
+						server.setlive(false)
+					} else {
+						fmt.Println("Server", server.url, "is up")
+						server.setlive(true)
+					}
+			}
+			fmt.Println("Health check completed")
+		}
+	}
+}
+}
+
 func find_next_live_server() backendserver {
 	current = get_server_index()
 	len_of_server_list := len(server_list)
 	for i := uint64(0); i < uint64(len_of_server_list); i++ {
 		idx := (current + i) % uint64(len_of_server_list)
 		if health_check(server_list[idx]) {
-			server_list[idx].islive = true
+			server_list[idx].setlive(true)
+			current =  idx
 			return server_list[idx]
-		} else {
-			server_list[idx].islive = false
+		}else{
+			server_list[idx].setlive(true)
 		}
-		current = get_server_index()
 	}
 	return server_list[current]
 }
@@ -70,6 +102,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	go regular_health_check(server_list)
 	http.HandleFunc("/", handler)
 	fmt.Println("Starting server at http://localhost:8080")
 	http.ListenAndServe(":8080", nil)
